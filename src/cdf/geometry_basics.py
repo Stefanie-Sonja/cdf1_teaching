@@ -87,6 +87,85 @@ def create_cylinder(base_point=None, height=10.0, radius=5.0):
     cylinder = rg.Cylinder(circle, height)
     return cylinder.ToBrep(True, True)
 
+def create_ring(center=None, radius=10.0, thickness=0.5):
+    """
+    Build a closed ring (torus) lying flat in the XY plane.
+
+    center    : Rhino.Geometry.Point3d -- center of the ring
+    radius    : float -- radius from the center to the middle of the tube
+    thickness : float -- radius of the tube cross-section
+
+    Returns a Rhino.Geometry.Brep.
+    """
+    if center is None:
+        center = rg.Point3d(0, 0, 0)
+
+    plane = rg.Plane(center, rg.Vector3d.ZAxis)
+    torus = rg.Torus(plane, radius, thickness)
+    return rg.Brep.CreateFromSurface(torus.ToRevSurface())
+
+def create_rod(p0, p1, radius):
+    """
+    Build a rod (cylinder) between two points.
+
+    p0     : Rhino.Geometry.Point3d -- start point of the rod
+    p1     : Rhino.Geometry.Point3d -- end point of the rod
+    radius : float -- radius of the rod
+
+    Returns a Rhino.Geometry.Brep.
+    """
+    if p0 is None or p1 is None:
+        raise ValueError("Both p0 and p1 must be provided.")
+
+    height = p0.DistanceTo(p1)
+    direction = rg.Vector3d(p1 - p0)
+    direction.Unitize()
+    plane = rg.Plane(p0, direction)
+    circle = rg.Circle(plane, radius)
+    cylinder = rg.Cylinder(circle, height)
+    return cylinder.ToBrep(True, True)
+
+def create_star(center=None, outer_radius=5.0, inner_radius=2.0, n_points=5, thickness=0.5):
+    """
+    Build an upright star (extruded star outline) standing in the XZ plane.
+
+    center       : Rhino.Geometry.Point3d -- center of the star
+    outer_radius : float -- radius of the tips
+    inner_radius : float -- radius of the inner corners
+    n_points     : int   -- number of tips
+    thickness    : float -- extrusion depth (along Y)
+
+    Returns a Rhino.Geometry.Brep. The first tip points straight up (+Z).
+    """
+    if center is None:
+        center = rg.Point3d(0, 0, 0)
+
+    # plane: x = world X, y = world Z  -> star stands upright
+    plane = rg.Plane(center, rg.Vector3d.XAxis, rg.Vector3d.ZAxis)
+    pts = []
+    for i in range(2 * n_points):
+        r = outer_radius if i % 2 == 0 else inner_radius
+        a = math.pi / 2 + math.pi * i / n_points
+        pts.append(plane.PointAt(r * math.cos(a), r * math.sin(a)))
+    pts.append(pts[0])
+
+    outline = rg.Polyline(pts).ToNurbsCurve()
+    extrusion = rg.Extrusion.Create(outline, thickness, True)
+    return extrusion.ToBrep()
+
+def create_loft(curves, closed=False):
+    """
+    Loft a surface through a list of curves (all with the same number of control points).
+
+    curves : list of Rhino.Geometry.Curve -- section curves, bottom to top
+    closed : bool -- close the loft back to the first curve
+
+    Returns a Rhino.Geometry.Brep (or None if the loft fails).
+    """
+    breps = rg.Brep.CreateFromLoft(curves, rg.Point3d.Unset, rg.Point3d.Unset,
+                                   rg.LoftType.Normal, closed)
+    return breps[0] if breps else None
+
 def boolean_difference(brep_a, brep_b):
     """
     Perform a boolean difference operation between two Breps.
