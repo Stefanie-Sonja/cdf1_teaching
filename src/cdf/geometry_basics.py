@@ -47,8 +47,22 @@ def create_sphere(base_point=None, radius=5.0):
     if base_point is None:
         base_point = rg.Point3d(0, 0, 0)
 
-    sphere = rg.Sphere(base_point, radius)
-    return sphere.ToBrep()
+    # 1st try: sphere from a plane (more reliable than Sphere(point, radius))
+    plane = rg.Plane(base_point, rg.Vector3d.ZAxis)
+    sphere = rg.Sphere(plane, radius)
+    if sphere.IsValid:
+        brep = sphere.ToBrep()
+        if brep is not None:
+            return brep
+
+    # fallback: revolve a half circle around the vertical axis
+    arc_plane = rg.Plane(base_point, rg.Vector3d.XAxis, rg.Vector3d.ZAxis)
+    half_circle = rg.Arc(rg.Circle(arc_plane, radius),
+                         rg.Interval(-math.pi / 2, math.pi / 2)).ToNurbsCurve()
+    axis = rg.Line(base_point - rg.Vector3d(0, 0, radius),
+                   base_point + rg.Vector3d(0, 0, radius))
+    rev = rg.RevSurface.Create(half_circle, axis)
+    return rg.Brep.CreateFromRevSurface(rev, False, False) if rev else None
 
 def create_box(base_point=None, width=10.0, depth=10.0, height=10.0):
     """
@@ -165,6 +179,49 @@ def create_loft(curves, closed=False):
     breps = rg.Brep.CreateFromLoft(curves, rg.Point3d.Unset, rg.Point3d.Unset,
                                    rg.LoftType.Normal, closed)
     return breps[0] if breps else None
+
+def create_sweep(rail, profile, tolerance=0.001):
+    """
+    Sweep a profile curve along a rail curve (one-rail sweep).
+
+    rail      : Rhino.Geometry.Curve -- path
+    profile   : Rhino.Geometry.Curve -- cross-section, placed at the start of the rail
+    tolerance : float
+
+    Returns a Rhino.Geometry.Brep (or None if the sweep fails).
+    """
+    breps = rg.Brep.CreateFromSweep(rail, profile, False, tolerance)
+    return breps[0] if breps else None
+
+def create_bowl(center=None, inner_radius=2.0, outer_radius=2.3):
+    """
+    Build a hemispherical bowl (open at the top) as a closed solid.
+    The rim lies at the height of center, the bowl hangs below it.
+
+    center       : Rhino.Geometry.Point3d -- centre of the sphere the bowl is cut from
+    inner_radius : float -- inner radius (where the marble lies)
+    outer_radius : float -- outer radius (wall thickness = outer - inner)
+
+    Returns a Rhino.Geometry.Brep.
+    """
+    if center is None:
+        center = rg.Point3d(0, 0, 0)
+
+    # profile in the XZ plane: outer quarter arc, rim, inner quarter arc, axis
+    plane = rg.Plane(center, rg.Vector3d.XAxis, rg.Vector3d.ZAxis)
+    outer = rg.Arc(rg.Circle(plane, outer_radius), rg.Interval(-math.pi / 2, 0)).ToNurbsCurve()
+    inner = rg.Arc(rg.Circle(plane, inner_radius), rg.Interval(-math.pi / 2, 0)).ToNurbsCurve()
+    rim = rg.LineCurve(plane.PointAt(inner_radius, 0), plane.PointAt(outer_radius, 0))
+    bottom = rg.LineCurve(plane.PointAt(0, -outer_radius), plane.PointAt(0, -inner_radius))
+
+    joined = rg.Curve.JoinCurves([outer, rim, inner, bottom])
+    if not joined:
+        return None
+    profile = joined[0]
+
+    axis = rg.Line(center - rg.Vector3d(0, 0, outer_radius), center)
+    rev = rg.RevSurface.Create(profile, axis)
+    return rg.Brep.CreateFromRevSurface(rev, False, False) if rev else None
 
 def boolean_difference(brep_a, brep_b):
     """
